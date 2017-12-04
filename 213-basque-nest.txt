@@ -1,0 +1,3 @@
+pin: 6FTGREKE
+prod_id: b165a15c-8ecf-4b77-97c0-e5027c7d94e2
+Prod_secret: V5Rkm5xnWpRKpjoYvJgSyMe9L
