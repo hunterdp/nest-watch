@@ -3,11 +3,12 @@ import sys
 import time
 import datetime
 import json
-
-# NB you need to install these python libraries
+import ConfigParser
 import nest
 import influxdb
 import pyowm
+
+from ConfigParser import SafeConfigParser
 from influxdb import client as influxdb
 from pyowm.utils import temputils
 
@@ -15,31 +16,27 @@ class WeatherObj(object):
     def __init__(self, data):
 	    self.__dict__ = json.loads(data)
 
-# Replace them with your own unique values
-# The w_api_key is from OpenWeatherMap.org
-# NB: Move these into a configuration file to make things
-#     easier to read and manage.
 
-n_id = 'b165a15c-8ecf-4b77-97c0-e5027c7d94e2'
-n_secret = 'V5Rkm5xnWpRKpjoYvJgSyMe9L'
-n_cache_file = '.config/nest/token_cache'
-n_pin = '6FTGREKE'
+# Read in the configuration information
 
-# Tahoe
-n_lat = 39.293528 
-n_long = -120.120746 
+NestConfig = SafeConfigParser()
+NestConfig.read("./nest_watch.ini")
 
-# Mt View
-#n_lat = 37.3861
-#n_long = -122.0839
+n_id = NestConfig.get('Thermostat', 'id')
+n_secret = NestConfig.get('Thermostat', 'secret')
+n_cache_file = NestConfig.get('Thermostat', 'cache_file')
+n_pin = NestConfig.get('Thermostat', 'pin')
 
-db_server = 'tick-server.312woodland.ddns.net'
-db_port = 8086
-db_user = 'influx'
-db_pwd = 'influx_pass'
-db_name = 'nest'
-w_api_key = 'd168bb3ff17b6e05e2b1cf267b22866e'
-w_location = 'Truckee,us'
+db_server = NestConfig.get('Database', 'server')
+db_port = NestConfig.get('Database', 'port')
+db_user = NestConfig.get('Database', 'user')
+db_pwd = NestConfig.get('Database', 'pwd')
+db_name = NestConfig.get('Database', 'name')
+
+w_api_key = NestConfig.get('Weather', 'api_key')
+w_location = NestConfig.get('Weather', 'location')
+n_lat = NestConfig.get('Weather', 'lat')
+n_long = NestConfig.get('Weather', 'long')
 
 series = []
 
@@ -52,7 +49,12 @@ db.switch_database(db_name)
 napi = nest.Nest(client_id=n_id,client_secret=n_secret, access_token_cache_file=n_cache_file)
 # In interactive mode, this would ask for a pin code
 if napi.authorization_required:
-    napi.request_token(n_pin)
+    if sys.version_info[0] < 3:
+        pin = raw_input("PIN RAW: ")
+    else:
+        pin = input("PIN: ")
+    napi.request_token(pin)
+#    napi.request_token(n_pin)
 
 
 ''' Grab the Nest Thermstat information and store in the defined InfluxDB '''
