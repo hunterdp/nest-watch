@@ -1,7 +1,8 @@
 #! /usr/bin/python
 
 # nest-watch.py -- logs Nest Thermostat and observed weather
-#                  information to an influxdb
+#                  information to an influxdb.  Note: Must be
+#                  run with python 3.x+
 #
 # by David Hunter, dph@alumni.neu.edu 
 #
@@ -14,16 +15,18 @@
 #    Thanks to Scott M Baker's nest.py which this is based on 
 #    for interacting with the Nest Thermostat
 
+import logging
 import urllib
-import urllib2
 import sys
-import ConfigParser
-from ConfigParser import SafeConfigParser
+import configparser
+from configparser import SafeConfigParser
 import pyowm
 from pyowm.utils import temputils
 import influxdb
 import os
 import os.path
+import json
+
 
 try:
    import json
@@ -31,20 +34,31 @@ except ImportError:
    try:
        import simplejson as json
    except ImportError:
-       print "No json library available. I recommend installing either python-json"
-       print "or simpejson."
+       logger.error ("No json library available. I recommend installing either python-json or simplejson.")
        sys.exit(-1)
 
 class WeatherObj(object):
     def __init__(self, data):
-	self.__dict__ = json.loads(data)
+       self.__dict__ = json.loads(data)
 
 class Configuration(object):
+    username = ""
+    password = "" 
+    db_server ="" 
+    db_port = 80 
+    db_user = ""
+    db_pwd = ""
+    db_name = "nest"
+    api_key = "" 
+    lat = 0
+    long = 180 
+    location = ""
+
     def __init__(self, config_file):
         if os.path.isfile(config_file) and os.access(config_file, os.R_OK):
-            print "config file found and is readable"
+            print("Config file found and is readable")
         else:
-            print "Either file is missing or not readable"
+            print ("Either file is missing or not readable")
 
     def read(self):
         NestConfig = SafeConfigParser()
@@ -72,11 +86,8 @@ class Nest:
         req = urllib2.Request("https://home.nest.com/user/login",
                               data,
                               {"user-agent":"Nest/1.1.0.10 CFNetwork/548.0.4"})
-
         res = urllib2.urlopen(req).read()
-
         res = self.loads(res)
-
         self.transport_url = res["urls"]["transport_url"]
         self.access_token = res["access_token"]
         self.userid = res["userid"]
@@ -90,14 +101,14 @@ class Nest:
         res = urllib2.urlopen(req).read()
         res = self.loads(res)
         self.structure_id = res["structure"].keys()[0]
-        print self.structure_id
+        print(self.structure_id)
 
         if (self.serial is None):
             self.device_id = res["structure"][self.structure_id]["devices"][self.index]
             self.serial = self.device_id.split(".")[1]
         self.status = res
-        print json.dumps(res, indent=4, sort_keys=True)
-#        print res
+        print (json.dumps(res, indent=4, sort_keys=True))
+#        print (res)
 
 #    def get_info(self):
 
@@ -119,15 +130,35 @@ class Nest:
         allvars = shared
         allvars.update(device)
         for k in sorted(allvars.keys()):
-             print k + "."*(32-len(k)) + ":", allvars[k]
+             print (k + "."*(32-len(k)) + ":", allvars[k])
 
     def show_curtemp(self):
         temp = self.status["shared"][self.serial]["current_temperature"]
         temp = self.temp_out(temp)
-        print "%0.1f" % temp
+        print ("%0.1f" % temp)
 
 
 def main():
+
+    ''' Set up the logging module and verify prerequisites 
+        NB: - Think about putting this in its own module 
+            - Update to log to a specific file             '''
+    
+    logger = logging.getLogger()
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s %(name)-12s %(levelname)-8s %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)    
+
+
+    if (sys.version_info.major < 3):
+        logger.critical("Need version 3 or greater of python")
+        exit(-1)
+
+
+    ''' Read in any configurations '''
+
     Configuration("./nest_track.ini")
     NestConfig = SafeConfigParser()
     NestConfig.read("./nest_track.ini")
@@ -148,20 +179,14 @@ def main():
     n_long = NestConfig.get('Weather', 'long')
 
 
-    print "..."
-
-#
-#    if opts.celsius:
-#        units = "C"
-#    else:
-#        units = "F"
+    print ("...")
 
     n = Nest(n_id, n_secret)
     n.login()
     n.get_status()
     n.show_status()
     n.show_curtemp()
-    print n.status["device"][n.serial]["current_humidity"]
+    print (n.status["device"][n.serial]["current_humidity"])
 
 if __name__=="__main__":
    main()
