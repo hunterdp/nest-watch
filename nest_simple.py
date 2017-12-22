@@ -1,69 +1,21 @@
 #! /usr/bin/python
 
-# nest-watch.py -- logs Nest Thermostat and observed weather
-#                  information to an influxdb.  Note: Must be
-#                  run with python 3.x+
-#
-# by David Hunter, dph@alumni.neu.edu 
-#
-# Usage:
-#    Reads in a configuration file (nest-watch.ini).  By default it reads the
-#    first thermostat found in a user account.  Use the device_index to specify
-#    another one. 
-#
-# Acknowledgements:
-#    Thanks to Scott M Baker's nest.py which this is based on 
-#    for interacting with the Nest Thermostat
-
-import logging
-import urllib
-import sys
+import logging, logging.handlers
+import urllib, urllib.parse, urllib.request
 import configparser
+import influxdb, pyowm
+import os, os.path, json, sys
+
 from configparser import SafeConfigParser
-import pyowm
 from pyowm.utils import temputils
-import influxdb
-import os
-import os.path
-import json
 
-
-try:
-   import json
-except ImportError:
-   try:
-       import simplejson as json
-   except ImportError:
-       logger.error ("No json library available. I recommend installing either python-json or simplejson.")
-       sys.exit(-1)
+__title__   = "NestLogger"
+__version__ = "0.1"
+__author__  = "David Hunter"
+__log_name__ = "NestWatcher"
 
 class WeatherObj(object):
     def __init__(self, data):
-       self.__dict__ = json.loads(data)
-
-class Configuration(object):
-    username = ""
-    password = "" 
-    db_server ="" 
-    db_port = 80 
-    db_user = ""
-    db_pwd = ""
-    db_name = "nest"
-    api_key = "" 
-    lat = 0
-    long = 180 
-    location = ""
-
-    def __init__(self, config_file):
-        if os.path.isfile(config_file) and os.access(config_file, os.R_OK):
-            print("Config file found and is readable")
-        else:
-            print ("Either file is missing or not readable")
-
-    def read(self):
-        NestConfig = SafeConfigParser()
-        NestConfig.read(self.config_file)
-        return NestConfig
 
 class Nest:
     def __init__(self, username, password, serial=None, index=0, units="F"):
@@ -72,6 +24,9 @@ class Nest:
         self.serial = serial
         self.units = units
         self.index = index
+        LOG = logging.getLogger(__log_name__)
+        LOG.debug("Passed in username: %s, serial: %s, index: %s, units: %s.", 
+                   username, serial, index, units)
 
     def loads(self, res):
         if hasattr(json, "loads"):
@@ -81,44 +36,68 @@ class Nest:
         return res
 
     def login(self):
-        data = urllib.urlencode({"username": self.username, "password": self.password})
 
-        req = urllib2.Request("https://home.nest.com/user/login",
-                              data,
-                              {"user-agent":"Nest/1.1.0.10 CFNetwork/548.0.4"})
-        res = urllib2.urlopen(req).read()
-        res = self.loads(res)
+        LOG = logging.getLogger(__log_name__)
+
+        url = "https://home.nest.com/user/login"
+        browser_s = {"user-agent":"Nest/1.1.0.10 CFNetwork/548.0.4"} 
+        login_s = {"username": self.username, "password": self.password}
+        data = urllib.parse.urlencode(login_s).encode("utf-8")
+        LOG.info("Attempting to log in %s with username: %s", url, self.username)    
+ 
+        req = urllib.request.Request(url, data, browser_s)
+        res = urllib.request.urlopen(req).read()
+        LOG.info("Opened url and retrieved page.")    
+
+        res = json.loads(res)
+
+        msg = (json.dumps(res, indent=4, sort_keys=True))
+        LOG.debug("Dump of returned url data:")
+        LOG.debug(msg)
+
         self.transport_url = res["urls"]["transport_url"]
         self.access_token = res["access_token"]
         self.userid = res["userid"]
 
+        LOG.debug("Transport URL is %s with an access toke of %s and user id of %s.",
+                   self.transport_url, self.access_token, self.userid)
+
+
     def get_status(self):
-        req = urllib2.Request(self.transport_url + "/v2/mobile/user." + self.userid,
+
+        req = urllib.request.Request(self.transport_url + "/v2/mobile/user." + self.userid,
                               headers={"user-agent":"Nest/1.1.0.10 CFNetwork/548.0.4",
                                        "Authorization":"Basic " + self.access_token,
                                        "X-nl-user-id": self.userid,
                                        "X-nl-protocol-version": "1"})
-        res = urllib2.urlopen(req).read()
-        res = self.loads(res)
-        self.structure_id = res["structure"].keys()[0]
-        print(self.structure_id)
+        res = urllib.request.urlopen(req).read()
+        res = json.loads(res)
+#        print (json.dumps(res["structure"], indent=4, sort_keys=True))
+#        for key in res:
+#            print("%key: %s      value: %s", key, res[key])
+
+        self.structure_id = res["structure"].keys()
+
+#        for key in res["structure"].keys():
+#            print("%key: %s       value: %s", key, res["structure"].values()
+
+#        print("self.structure_id: %s", self.structure_id)
+#        print("self.structure_value: %s", res["structure"].values())
+
 
         if (self.serial is None):
             self.device_id = res["structure"][self.structure_id]["devices"][self.index]
             self.serial = self.device_id.split(".")[1]
         self.status = res
         print (json.dumps(res, indent=4, sort_keys=True))
-#        print (res)
 
-#    def get_info(self):
-
-    def temp_in(self, temp):
+    def temp_ftc(self, temp):
         if (self.units == "F"):
             return (temp - 32.0) / 1.8
         else:
             return temp
 
-    def temp_out(self, temp):
+    def temp_ctf(self, temp):
         if (self.units == "F"):
             return temp*1.8 + 32.0
         else:
@@ -134,59 +113,35 @@ class Nest:
 
     def show_curtemp(self):
         temp = self.status["shared"][self.serial]["current_temperature"]
-        temp = self.temp_out(temp)
+        temp = self.temp_ctf(temp)
         print ("%0.1f" % temp)
 
-
 def main():
+    LOG = _configure_logger(__log_name__)
+    LOG.info("Starting %s Version %s.", __title__, __version__)
 
-    ''' Set up the logging module and verify prerequisites 
-        NB: - Think about putting this in its own module 
-            - Update to log to a specific file             '''
-    
-    logger = logging.getLogger()
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s %(name)-12s %(levelname)-8s %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)    
-
-
-    if (sys.version_info.major < 3):
-        logger.critical("Need version 3 or greater of python")
+    if (sys.version_info.major != 3):
+        LOG.critical("Need version 3 or greater of python.  Exiting program.")
         exit(-1)
 
+    Config = Configuration("./nest_track.ini")
+    Nest_s = Config.read()
 
-    ''' Read in any configurations '''
+    '''
+    LOG.info("Logging into %s on port %s with username %s.", 
+              Nest_s["db_server"], Nest_s["db_port"], Nest_s["db_user"])
 
-    Configuration("./nest_track.ini")
-    NestConfig = SafeConfigParser()
-    NestConfig.read("./nest_track.ini")
+    LOG.info("Storing information in the %s database.", Nest_s["db_name"])
+    LOG.info("Getting observed weather at location %s (lat: %s long: %s).", Nest_s["location"], Nest_s["lat"], Nest_s["long"])
+    '''
 
-    n_id = NestConfig.get('Thermostat', 'username')
-    n_secret = NestConfig.get('Thermostat', 'password')
-    n_cache_file = NestConfig.get('Thermostat', 'cache_file')
-
-    db_server = NestConfig.get('Database', 'server')
-    db_port = NestConfig.get('Database', 'port')
-    db_user = NestConfig.get('Database', 'user')
-    db_pwd = NestConfig.get('Database', 'pwd')
-    db_name = NestConfig.get('Database', 'name')
-
-    w_api_key = NestConfig.get('Weather', 'api_key')
-    w_location = NestConfig.get('Weather', 'location')
-    n_lat = NestConfig.get('Weather', 'lat')
-    n_long = NestConfig.get('Weather', 'long')
-
-
-    print ("...")
-
-    n = Nest(n_id, n_secret)
+    n = Nest(Nest_s["id"], Nest_s["secret"])
     n.login()
-    n.get_status()
-    n.show_status()
-    n.show_curtemp()
-    print (n.status["device"][n.serial]["current_humidity"])
+
+#    n.get_status()
+#    n.show_status()
+#    n.show_curtemp()
+#    print (n.status["device"][n.serial]["current_humidity"])
 
 if __name__=="__main__":
    main()
