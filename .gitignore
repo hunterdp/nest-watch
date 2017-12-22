@@ -1,0 +1,6 @@
+# log files
+*.log
+
+# .ini and .conf files (for now)
+*.ini
+*.conf

@@ -1,4 +1,0 @@
-pin: 822RCSZ6
-prod_id: e709f4c7-46b4-4ac1-916b-fd723746a20a
-prod_secret: fUZyrfzh7Gak852enAY3uF8rx
-auth_irl: https://home.nest.com/login/oauth2?client_id=e709f4c7-46b4-4ac1-916b-fd723746a20a&state=STATE
